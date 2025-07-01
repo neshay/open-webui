@@ -4,6 +4,7 @@ import mimetypes
 import os
 import shutil
 import asyncio
+import requests
 
 
 import uuid
@@ -1413,6 +1414,35 @@ def process_file(
 
         hash = calculate_sha256_string(text_content)
         Files.update_file_hash_by_id(file.id, hash)
+
+        # Push to neo4j database.
+        if os.environ.get("NEO4J_GRAPH_INGEST"):
+            try:
+                SHAKUDO_GRAPH_TOOL_MICROSERVICE = os.getenv(
+                "SHAKUDO_NEO4J_GRAPH_TOOL_MICROSERVICE"
+                )
+                if not SHAKUDO_GRAPH_TOOL_MICROSERVICE:
+                    raise ValueError(
+                    "SHAKUDO_NEO4J_GRAPH_TOOL_MICROSERVICE environment variable not set"
+                    )
+                payload = {
+                    "file_name": file.filename,
+                    "file_hash": hash if hash else "",
+                    "content": str(text_content),
+                    "chat_id": "123", # TODO: Need to propagate chat_id from the webui instance
+                }
+                response = requests.post(SHAKUDO_GRAPH_TOOL_MICROSERVICE, json=payload)
+                response.raise_for_status() # This will raise an exception for HTTP errors
+                
+                log.info("Successfully ingested file to neo4j.")
+            except requests.RequestException as e:
+                log.error(f"Error ingesting file to neo4j: {str(e)}")
+            except ValueError as e:
+                log.error(str(e))
+            except Exception as e:
+                log.error(f"Unexpected error during neo4j ingestion: {str(e)}")
+        else:
+            log.info("Neo4J Ingestion not configured")
 
         if not request.app.state.config.BYPASS_EMBEDDING_AND_RETRIEVAL:
             try:
